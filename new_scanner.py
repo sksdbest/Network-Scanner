@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Automated Network Scanner  v3.0
-Author  : Shubham Sahu  (ssahu@planful.com)
+Automated Network Scanner  v4.0
+Author  : Shubham Sahu  (shubham@goodhacker.in)
 Requires: nmap  (sudo apt install nmap)
           git   (option 4 only)
 
