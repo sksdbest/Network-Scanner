@@ -1060,180 +1060,9 @@ def print_scan_summary() -> None:
     info(f"Log    : {LOG_FILE}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SECTION I – NEW Option 13: Plugin-Based Checks + Risk Scoring
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def option13() -> None:
-    """
-    Runs the 15 built-in plugin checks against every nmap output file
-    in the current results directory, then scores every finding with the
-    VPR risk engine and saves a ranked JSON report.
-    """
-    banner("Plugin-Based Checks  (15 checks + VPR Risk Engine)")
-    try:
-        from scanner_plugins import CheckRegistry, RiskEngine, save_findings
-    except ImportError:
-        err("scanner_plugins.py not found. Place it in the same directory.")
-        return
-
-    xml_files = sorted(RESULTS_DIR.glob("*.xml"))
-    txt_files = sorted(RESULTS_DIR.glob("*.nmap"))
-
-    if not xml_files and not txt_files:
-        warn("No nmap output files in results directory yet. Run a scan first (options 2–11).")
-        return
-
-    info(f"Scanning {len(xml_files)} XML + {len(txt_files)} text file(s) …")
-
-    # Parse XML for the service list (used by service-aware checks)
-    from scanner_plugins import Check as _Check
-    services = _Check.parse_xml_services(xml_files)
-    info(f"Found {len(services)} open service(s) from XML")
-
-    registry = CheckRegistry()
-    findings = registry.run_all(xml_files, txt_files, services)
-
-    if not findings:
-        warn("No plugin findings. The checks may need nmap-vulners / ssl-* output to trigger.")
-        warn("Run option 7 or option 11 first for richer script output.")
-        return
-
-    # Score with risk engine
-    engine = RiskEngine()
-    scored = engine.score_all(findings)
-
-    # Terminal summary
-    banner("Plugin Check Results")
-    from collections import Counter
-    sev_counts = Counter(f.severity for f in scored)
-    for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
-        if sev_counts[sev]:
-            info(f"  {sev:<10} {sev_counts[sev]}")
-
-    print()
-    print(f"  {'CHECK ID':<14} {'SEV':<10} {'VPR':>5}  {'HOST:PORT':<22}  NAME")
-    print("  " + "─" * 90)
-    for f in scored[:20]:
-        print(f"  {f.check_id:<14} {f.severity:<10} {f.vpr_score:>5.1f}  "
-              f"{f.host}:{f.port:<16}  {f.name[:45]}")
-    if len(scored) > 20:
-        info(f"  … and {len(scored) - 20} more. See the JSON report.")
-
-    path = save_findings(scored, RESULTS_DIR)
-    ok(f"Findings saved: {path.name}")
-    print_scan_summary()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SECTION J – NEW Option 14: Generate Reports (HTML + Word)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def option14() -> None:
-    """
-    Reads all JSON output files in the results directory and generates:
-      • A self-contained HTML executive dashboard
-      • A professional Word (.docx) technical report
-    """
-    banner("Generate Reports  (HTML Executive + Word Technical)")
-    try:
-        from report_engine import HTMLReport, WordReport
-    except ImportError:
-        err("report_engine.py not found. Place it in the same directory.")
-        return
-
-    # HTML report
-    info("Generating HTML executive report …")
-    html_path = HTMLReport(RESULTS_DIR).generate()
-    if html_path:
-        ok(f"HTML report: {html_path.name}")
-    else:
-        err("HTML report generation failed.")
-
-    # Word report
-    info("Generating Word technical report via Node.js …")
-    word_path = WordReport(RESULTS_DIR).generate()
-    if word_path:
-        ok(f"Word report: {word_path.name}")
-    else:
-        warn("Word report skipped (Node.js or generate_report.js not available).")
-
-    print_scan_summary()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SECTION K – NEW Option 15: Web Application Scan
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def option15() -> None:
-    """
-    Runs the web application scanner against all HTTP/HTTPS services
-    discovered in previous scans.
-
-    If Nikto is installed it is run first; then 7 custom checks run regardless:
-      admin panel finder (80 paths), CORS, cookie flags, server banners,
-      directory listing, information leakage, live TLS version check.
-    """
-    banner("Web Application Scan  (Nikto + 7 custom HTTP checks)")
-    try:
-        from web_scanner import WebScanner
-    except ImportError:
-        err("web_scanner.py not found. Place it in the same directory.")
-        return
-
-    check_scope_file()
-
-    # Load services from any XML in the results folder
-    from scanner_plugins import Check as _Check
-    xml_files = sorted(RESULTS_DIR.glob("*.xml"))
-    services  = _Check.parse_xml_services(xml_files)
-
-    if not services:
-        warn("No service data found. Run option 2 or 11 first to detect services.")
-        warn("Falling back to scope.txt – will attempt HTTP/HTTPS on ports 80/443.")
-        # Build a minimal service list from scope.txt
-        targets = [l.strip() for l in SCOPE_FILE.read_text().splitlines() if l.strip()]
-        services = [
-            {"host": t, "port": 80,  "protocol": "tcp", "service": "http",  "product": "", "version": "", "cpe": ""}
-            for t in targets
-        ] + [
-            {"host": t, "port": 443, "protocol": "tcp", "service": "https", "product": "", "version": "", "cpe": ""}
-            for t in targets
-        ]
-
-    ws       = WebScanner(RESULTS_DIR)
-    findings = ws.scan(services)
-
-    if not findings:
-        warn("No web findings. Targets may not have HTTP services or they were unreachable.")
-        return
-
-    path = ws.save(findings)
-    ok(f"Web findings saved: {path.name}")
-
-    # Terminal summary
-    banner("Web Scan Results")
-    from collections import Counter
-    sev_counts = Counter(f.severity for f in findings)
-    for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
-        if sev_counts[sev]:
-            info(f"  {sev:<10} {sev_counts[sev]}")
-
-    print()
-    for f in findings[:15]:
-        sev = f.severity
-        print(f"  [{sev:<8}]  {f.host}:{f.port:<6}  {f.name[:60]}")
-    if len(findings) > 15:
-        info(f"  … and {len(findings) - 15} more. See web_findings JSON report.")
-
-    print_scan_summary()
-
-
-# ─── Update Menu and Dispatch ─────────────────────────────────────────────────
-
 MENU = """
 {cyan}{bold}  ╔════════════════════════════════════════════════════════════════════╗
-  ║            Automated Network Scanner  v4.0                         ║
+  ║            Automated Network Scanner  v3.0                         ║
   ╚════════════════════════════════════════════════════════════════════╝{reset}
 
     {white} 1{reset}  Check My IP Address
@@ -1246,19 +1075,14 @@ MENU = """
     {white} 8{reset}  DoS Scripts            {yellow}⚠  authorised targets only{reset}
     {white} 9{reset}  Malware Detection Scripts
     {white}10{reset}  Automated Essential Scan
-    {cyan}──────────────────────── v3.0  ─────────────────────────────────────{reset}
-    {white}11{reset}  {bold}Smart Vuln Scan{reset}   – service detect → auto NSE → CVE enrich
-    {white}12{reset}  {bold}Enrich CVEs{reset}       – from an existing nmap XML file
-    {cyan}──────────────────────── v4.0  ─────────────────────────────────────{reset}
-    {white}13{reset}  {bold}Plugin Checks{reset}     – 15 built-in checks + VPR risk engine
-    {white}14{reset}  {bold}Generate Reports{reset}  – HTML executive + Word technical report
-    {white}15{reset}  {bold}Web App Scan{reset}      – Nikto + 7 custom HTTP checks
+    {cyan}──────────────────────────── v3.0 additions ───────────────────────{reset}
+    {white}11{reset}  {bold}Smart Vuln Scan{reset}  – service detect → auto NSE → CVE enrich
+    {white}12{reset}  {bold}Enrich CVEs{reset}      – from an existing nmap XML file
     {white}99{reset}  Quit
 
-  {yellow}API keys (optional):{reset}
-    export NVD_API_KEY=...   export GITHUB_TOKEN=...   export VULNERS_API_KEY=...
-
-  {yellow}Asset criticality (optional):{reset}  asset_criticality.json  {{"192.168.1.1": 1.0}}
+  {yellow}API keys (optional) – set before running for richer CVE data:{reset}
+    export NVD_API_KEY=...       export GITHUB_TOKEN=...
+    export VULNERS_API_KEY=...
 """
 
 def print_menu() -> None:
@@ -1280,9 +1104,6 @@ DISPATCH = {
     10: option10,
     11: option11,
     12: option12,
-    13: option13,
-    14: option14,
-    15: option15,
 }
 
 def main_menu() -> None:
