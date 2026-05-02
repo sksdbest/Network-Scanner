@@ -448,7 +448,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## 👤 Author
 
-**Shubham Sahu** — `ssahu@planful.com`
+**Shubham Sahu** — `shubham@goodhacker.in`
 
 Built at Planful. Not an official Planful product — provided as-is for the security community.
 
